@@ -102,9 +102,9 @@ func NewShard(ctx context.Context, promMetrics *monitoring.PrometheusMetrics,
 		var distProv distancer.Provider
 
 		switch hnswUserConfig.Distance {
-		case "", "cosine":
+		case "", hnsw.DistanceCosine:
 			distProv = distancer.NewDotProductProvider()
-		case "l2-squared":
+		case hnsw.DistanceL2Squared:
 			distProv = distancer.NewL2SquaredProvider()
 		default:
 			return nil, errors.Errorf("unrecognized distance metric %q,"+
@@ -205,7 +205,9 @@ func (s *Shard) initDBFile(ctx context.Context) error {
 
 	err = store.CreateOrLoadBucket(ctx, helpers.ObjectsBucketLSM,
 		lsmkv.WithStrategy(lsmkv.StrategyReplace),
-		lsmkv.WithSecondaryIndicies(1))
+		lsmkv.WithSecondaryIndicies(1),
+		lsmkv.WithMonitorCount(),
+	)
 	if err != nil {
 		return errors.Wrap(err, "create objects bucket")
 	}

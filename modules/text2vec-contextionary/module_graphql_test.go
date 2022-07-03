@@ -19,6 +19,7 @@ import (
 	"github.com/semi-technologies/weaviate/entities/filters"
 	"github.com/semi-technologies/weaviate/entities/search"
 	"github.com/semi-technologies/weaviate/modules/text2vec-contextionary/additional/models"
+	helper "github.com/semi-technologies/weaviate/test/helper"
 	"github.com/semi-technologies/weaviate/usecases/traverser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,23 +56,26 @@ func TestExtractAdditionalFields(t *testing.T) {
 	tests := []test{
 		{
 			name:  "with _additional certainty",
-			query: "{ Get { SomeAction { _additional { certainty } } } }",
+			query: "{ Get { SomeAction { _additional { certainty distance } } } }",
 			expectedParams: traverser.GetParams{
 				ClassName: "SomeAction",
 				AdditionalProperties: additional.Properties{
 					Certainty: true,
+					Distance:  true,
 				},
 			},
 			resolverReturn: []interface{}{
 				map[string]interface{}{
 					"_additional": map[string]interface{}{
 						"certainty": 0.69,
+						"distance":  helper.CertaintyToDist(t, 0.69),
 					},
 				},
 			},
 			expectedResult: map[string]interface{}{
 				"_additional": map[string]interface{}{
 					"certainty": 0.69,
+					"distance":  helper.CertaintyToDist(t, 0.69),
 				},
 			},
 		},
@@ -367,6 +371,45 @@ func TestNearTextRanker(t *testing.T) {
 		assert.Contains(t, res.Errors[0].Message, "Unknown argument \"nearText\" on field \"CustomVectorClass\"")
 	})
 
+	t.Run("for things with optional distance set", func(t *testing.T) {
+		query := `{ Get { SomeThing(nearText: {
+                concepts: ["c1", "c2", "c3"],
+								distance: 0.6,
+								moveTo: {
+									concepts:["positive"],
+									force: 0.5
+								},
+								moveAwayFrom: {
+									concepts:["epic"],
+									force: 0.25
+								}
+							}) { intField } } }`
+
+		expectedParams := traverser.GetParams{
+			ClassName:  "SomeThing",
+			Properties: []search.SelectProperty{{Name: "intField", IsPrimitive: true}},
+			Pagination: &filters.Pagination{Limit: filters.LimitFlagSearchByDist},
+			ModuleParams: map[string]interface{}{
+				"nearText": extractNearTextParam(map[string]interface{}{
+					"concepts": []interface{}{"c1", "c2", "c3"},
+					"distance": float64(0.6),
+					"moveTo": map[string]interface{}{
+						"concepts": []interface{}{"positive"},
+						"force":    float64(0.5),
+					},
+					"moveAwayFrom": map[string]interface{}{
+						"concepts": []interface{}{"epic"},
+						"force":    float64(0.25),
+					},
+				}),
+			},
+		}
+		resolver.On("GetClass", expectedParams).
+			Return([]interface{}{}, nil).Once()
+
+		resolver.AssertResolve(t, query)
+	})
+
 	t.Run("for things with optional certainty set", func(t *testing.T) {
 		query := `{ Get { SomeThing(nearText: {
                 concepts: ["c1", "c2", "c3"],
@@ -396,6 +439,73 @@ func TestNearTextRanker(t *testing.T) {
 					"moveAwayFrom": map[string]interface{}{
 						"concepts": []interface{}{"epic"},
 						"force":    float64(0.25),
+					},
+				}),
+			},
+		}
+		resolver.On("GetClass", expectedParams).
+			Return([]interface{}{}, nil).Once()
+
+		resolver.AssertResolve(t, query)
+	})
+
+	t.Run("for things with optional distance and objects set", func(t *testing.T) {
+		query := `{ Get { SomeThing(nearText: {
+								concepts: ["c1", "c2", "c3"],
+								distance: 0.4,
+								moveTo: {
+									concepts:["positive"],
+									force: 0.5
+									objects: [
+										{ id: "moveTo-uuid1" }
+										{ beacon: "weaviate://localhost/moveTo-uuid3" }
+									]
+								},
+								moveAwayFrom: {
+									concepts:["epic"],
+									force: 0.25
+									objects: [
+										{ id: "moveAway-uuid1" }
+										{ beacon: "weaviate://localhost/moveAway-uuid2" }
+										{ beacon: "weaviate://localhost/moveAway-uuid3" }
+									]
+								}
+							}) { intField } } }`
+
+		expectedParams := traverser.GetParams{
+			ClassName:  "SomeThing",
+			Properties: []search.SelectProperty{{Name: "intField", IsPrimitive: true}},
+			Pagination: &filters.Pagination{Limit: filters.LimitFlagSearchByDist},
+			ModuleParams: map[string]interface{}{
+				"nearText": extractNearTextParam(map[string]interface{}{
+					"concepts": []interface{}{"c1", "c2", "c3"},
+					"distance": float64(0.4),
+					"moveTo": map[string]interface{}{
+						"concepts": []interface{}{"positive"},
+						"force":    float64(0.5),
+						"objects": []interface{}{
+							map[string]interface{}{
+								"id": "moveTo-uuid1",
+							},
+							map[string]interface{}{
+								"beacon": "weaviate://localhost/moveTo-uuid3",
+							},
+						},
+					},
+					"moveAwayFrom": map[string]interface{}{
+						"concepts": []interface{}{"epic"},
+						"force":    float64(0.25),
+						"objects": []interface{}{
+							map[string]interface{}{
+								"id": "moveAway-uuid1",
+							},
+							map[string]interface{}{
+								"beacon": "weaviate://localhost/moveAway-uuid2",
+							},
+							map[string]interface{}{
+								"beacon": "weaviate://localhost/moveAway-uuid3",
+							},
+						},
 					},
 				}),
 			},
@@ -483,7 +593,7 @@ func Test_ResolveExplore(t *testing.T) {
 			query: `
 			{
 					Explore(nearText: {concepts: ["car", "best brand"]}) {
-							beacon className certainty
+							beacon className certainty distance
 					}
 			}`,
 			expectedParamsToTraverser: traverser.ExploreParams{
@@ -498,6 +608,7 @@ func Test_ResolveExplore(t *testing.T) {
 					Beacon:    "weaviate://localhost/some-uuid",
 					ClassName: "bestClass",
 					Certainty: 0.7,
+					Dist:      helper.CertaintyToDist(t, 0.7),
 				},
 			},
 			expectedResults: []result{{
@@ -507,6 +618,44 @@ func Test_ResolveExplore(t *testing.T) {
 						"beacon":    "weaviate://localhost/some-uuid",
 						"className": "bestClass",
 						"certainty": float32(0.7),
+						"distance":  helper.CertaintyToDist(t, 0.7),
+					},
+				},
+			}},
+		},
+
+		testCase{
+			name: "with nearText with optional limit and distance set",
+			query: `
+			{
+					Explore(
+						nearText: {concepts: ["car", "best brand"], distance: 0.6}, limit: 17
+						){
+							beacon className
+				}
+			}`,
+			expectedParamsToTraverser: traverser.ExploreParams{
+				ModuleParams: map[string]interface{}{
+					"nearText": extractNearTextParam(map[string]interface{}{
+						"concepts": []interface{}{"car", "best brand"},
+						"distance": float64(0.6),
+					}),
+				},
+				Limit: 17,
+			},
+			resolverReturn: []search.Result{
+				{
+					Beacon:    "weaviate://localhost/some-uuid",
+					ClassName: "bestClass",
+					Dist:      0.6,
+				},
+			},
+			expectedResults: []result{{
+				pathToField: []string{"Explore"},
+				expectedValue: []interface{}{
+					map[string]interface{}{
+						"beacon":    "weaviate://localhost/some-uuid",
+						"className": "bestClass",
 					},
 				},
 			}},

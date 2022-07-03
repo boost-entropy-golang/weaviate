@@ -34,7 +34,7 @@ func TestAnswerField(t *testing.T) {
 		//     result: "answer",
 		//     startPosition: 1
 		//     endPosition: 2
-		//     certainty: 0.2
+		//     distance: 0.2
 		//     property: "propName"
 		//     hasAnswer: true
 		//   }
@@ -44,12 +44,13 @@ func TestAnswerField(t *testing.T) {
 		assert.NotNil(t, answer.Type)
 		answerObject, answerObjectOK := answer.Type.(*graphql.Object)
 		assert.True(t, answerObjectOK)
-		assert.Equal(t, 6, len(answerObject.Fields()))
+		assert.Equal(t, 7, len(answerObject.Fields()))
 		assert.NotNil(t, answerObject.Fields()["result"])
 		assert.NotNil(t, answerObject.Fields()["startPosition"])
 		assert.NotNil(t, answerObject.Fields()["endPosition"])
 		assert.NotNil(t, answerObject.Fields()["property"])
 		assert.NotNil(t, answerObject.Fields()["certainty"])
+		assert.NotNil(t, answerObject.Fields()["distance"])
 		assert.NotNil(t, answerObject.Fields()["hasAnswer"])
 	})
 }

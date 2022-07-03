@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/pkg/errors"
+	"github.com/semi-technologies/weaviate/entities/additional"
 	"github.com/semi-technologies/weaviate/modules/qna-transformers/ent"
 	"github.com/sirupsen/logrus"
 )
@@ -80,6 +81,7 @@ func (v *qna) Answer(ctx context.Context,
 		Question:  resBody.Question,
 		Answer:    resBody.Answer,
 		Certainty: resBody.Certainty,
+		Distance:  additional.CertaintyToDist(resBody.Certainty),
 	}, nil
 }
 
@@ -96,5 +98,6 @@ type answersResponse struct {
 	answersInput `json:"answersInput"`
 	Answer       *string  `json:"answer"`
 	Certainty    *float64 `json:"certainty"`
+	Distance     *float64 `json:"distance"`
 	Error        string   `json:"error"`
 }

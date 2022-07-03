@@ -76,7 +76,7 @@ func (n *shardedLockCache) delete(ctx context.Context, id uint64) {
 	n.shardedLocks[id%shardFactor].Lock()
 	defer n.shardedLocks[id%shardFactor].Unlock()
 
-	if n.cache[id] == nil {
+	if int(id) >= len(n.cache) || n.cache[id] == nil {
 		return
 	}
 
@@ -130,6 +130,9 @@ var prefetchFunc func(in uintptr) = func(in uintptr) {
 }
 
 func (n *shardedLockCache) prefetch(id uint64) {
+	n.shardedLocks[id%shardFactor].RLock()
+	defer n.shardedLocks[id%shardFactor].RUnlock()
+
 	prefetchFunc(uintptr(unsafe.Pointer(&n.cache[id])))
 }
 

@@ -97,12 +97,14 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "123-456-789",
 				Beacon:    "weaviate://localhost/123-456-789",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "987-654-321",
 				Beacon:    "weaviate://localhost/987-654-321",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 
@@ -145,12 +147,14 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "123-456-789",
 				Beacon:    "weaviate://localhost/123-456-789",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "987-654-321",
 				Beacon:    "weaviate://localhost/987-654-321",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 
@@ -200,12 +204,14 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "bd3d1560-3f0e-4b39-9d62-38b4a3c4f23a",
 				Beacon:    "weaviate://localhost/bd3d1560-3f0e-4b39-9d62-38b4a3c4f23a",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "bd3d1560-3f0e-4b39-9d62-38b4a3c4f23b",
 				Beacon:    "weaviate://localhost/bd3d1560-3f0e-4b39-9d62-38b4a3c4f23b",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 
@@ -254,16 +260,55 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "bd3d1560-3f0e-4b39-9d62-38b4a3c4f23a",
 				Beacon:    "weaviate://localhost/bd3d1560-3f0e-4b39-9d62-38b4a3c4f23a",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "bd3d1560-3f0e-4b39-9d62-38b4a3c4f23b",
 				Beacon:    "weaviate://localhost/bd3d1560-3f0e-4b39-9d62-38b4a3c4f23b",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 
 		assert.Equal(t, 20, vectorSearcher.calledWithLimit,
+			"uses the default limit if not explicitly set")
+	})
+
+	t.Run("nearCustomText with limit and distance set", func(t *testing.T) {
+		authorizer := &fakeAuthorizer{}
+		locks := &fakeLocks{}
+		logger, _ := test.NewNullLogger()
+		vectorSearcher := &fakeVectorSearcher{}
+		log, _ := test.NewNullLogger()
+		explorer := NewExplorer(vectorSearcher, newFakeDistancer(), log, getFakeModulesProvider())
+		schemaGetter := &fakeSchemaGetter{}
+		traverser := NewTraverser(&config.WeaviateConfig{}, locks, logger, authorizer,
+			vectorSearcher, explorer, schemaGetter, getFakeModulesProvider())
+		params := ExploreParams{
+			Limit: 100,
+			NearVector: &searchparams.NearVector{
+				Vector:   []float32{7.8, 9},
+				Distance: 0.2,
+			},
+		}
+		vectorSearcher.results = []search.Result{
+			{
+				ClassName: "BestClass",
+				ID:        "123-456-789",
+			},
+			{
+				ClassName: "AnAction",
+				ID:        "987-654-321",
+			},
+		}
+
+		res, err := traverser.Explore(context.Background(), nil, params)
+		require.Nil(t, err)
+		assert.Equal(t, []search.Result{}, res) // certainty not matched
+
+		assert.Equal(t, []float32{7.8, 9}, vectorSearcher.calledWithVector)
+		assert.Equal(t, 100, vectorSearcher.calledWithLimit,
 			"uses the default limit if not explicitly set")
 	})
 
@@ -301,6 +346,43 @@ func Test_ExploreConcepts(t *testing.T) {
 
 		assert.Equal(t, []float32{7.8, 9}, vectorSearcher.calledWithVector)
 		assert.Equal(t, 100, vectorSearcher.calledWithLimit,
+			"uses the default limit if not explicitly set")
+	})
+
+	t.Run("nearCustomText with minimum distance set to 0.4", func(t *testing.T) {
+		authorizer := &fakeAuthorizer{}
+		locks := &fakeLocks{}
+		logger, _ := test.NewNullLogger()
+		vectorSearcher := &fakeVectorSearcher{}
+		log, _ := test.NewNullLogger()
+		explorer := NewExplorer(vectorSearcher, newFakeDistancer(), log, getFakeModulesProvider())
+		schemaGetter := &fakeSchemaGetter{}
+		traverser := NewTraverser(&config.WeaviateConfig{}, locks, logger, authorizer,
+			vectorSearcher, explorer, schemaGetter, getFakeModulesProvider())
+		params := ExploreParams{
+			ModuleParams: map[string]interface{}{
+				"nearCustomText": extractNearCustomTextParam(map[string]interface{}{
+					"concepts": []interface{}{"a search term", "another"},
+					"distance": float64(0.4),
+				}),
+			},
+		}
+		vectorSearcher.results = []search.Result{
+			{
+				ClassName: "BestClass",
+				ID:        "123-456-789",
+			},
+			{
+				ClassName: "AnAction",
+				ID:        "987-654-321",
+			},
+		}
+
+		res, err := traverser.Explore(context.Background(), nil, params)
+		require.Nil(t, err)
+		assert.Equal(t, []search.Result{}, res, "empty result because certainty is not met")
+		assert.Equal(t, []float32{1, 2, 3}, vectorSearcher.calledWithVector)
+		assert.Equal(t, 20, vectorSearcher.calledWithLimit,
 			"uses the default limit if not explicitly set")
 	})
 
@@ -386,12 +468,14 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "123-456-789",
 				Beacon:    "weaviate://localhost/123-456-789",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "987-654-321",
 				Beacon:    "weaviate://localhost/987-654-321",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 
@@ -493,12 +577,14 @@ func Test_ExploreConcepts(t *testing.T) {
 				ID:        "123-456-789",
 				Beacon:    "weaviate://localhost/123-456-789",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 			{
 				ClassName: "AnAction",
 				ID:        "987-654-321",
 				Beacon:    "weaviate://localhost/987-654-321",
 				Certainty: 0.5,
+				Dist:      0.5,
 			},
 		}, res)
 

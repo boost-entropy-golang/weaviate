@@ -92,7 +92,7 @@ func (req *AddReferenceInput) validate(
 	v *validation.Validator,
 	sm schemaManager,
 ) error {
-	if err := req.validateNames(); err != nil {
+	if err := validateReferenceName(req.Class, req.Property); err != nil {
 		return err
 	}
 	if err := v.ValidateSingleRef(ctx, &req.Ref, "validate reference"); err != nil {
@@ -103,80 +103,5 @@ func (req *AddReferenceInput) validate(
 	if err != nil {
 		return err
 	}
-	return req.validateSchema(schema)
-}
-
-// validateNames validates class and property names
-func (req *AddReferenceInput) validateNames() error {
-	if _, err := schema.ValidateClassName(req.Class); err != nil {
-		return err
-	}
-
-	if err := schema.ValidateReservedPropertyName(req.Property); err != nil {
-		return err
-	}
-
-	if _, err := schema.ValidatePropertyName(req.Property); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (req *AddReferenceInput) validateSchema(sch schema.Schema) error {
-	prop, err := sch.GetProperty(schema.ClassName(req.Class), schema.PropertyName(req.Property))
-	if err != nil {
-		return err
-	}
-
-	dt, err := sch.FindPropertyDataType(prop.DataType)
-	if err != nil {
-		return err
-	}
-
-	if dt.IsPrimitive() {
-		return fmt.Errorf("property '%s' is a primitive datatype, not a reference-type", req.Property)
-	}
-
-	return nil
-}
-
-func (m *Manager) validateCanModifyReference(principal *models.Principal,
-	className string, propertyName string,
-) error {
-	class, err := schema.ValidateClassName(className)
-	if err != nil {
-		return NewErrInvalidUserInput("invalid class name in reference: %v", err)
-	}
-
-	err = schema.ValidateReservedPropertyName(propertyName)
-	if err != nil {
-		return NewErrInvalidUserInput("invalid property name in reference: %v", err)
-	}
-
-	propName, err := schema.ValidatePropertyName(propertyName)
-	if err != nil {
-		return NewErrInvalidUserInput("invalid property name in reference: %v", err)
-	}
-
-	schema, err := m.schemaManager.GetSchema(principal)
-	if err != nil {
-		return err
-	}
-
-	prop, err := schema.GetProperty(class, propName)
-	if err != nil {
-		return NewErrInvalidUserInput("Could not find property '%s': %v", propertyName, err)
-	}
-
-	propertyDataType, err := schema.FindPropertyDataType(prop.DataType)
-	if err != nil {
-		return NewErrInternal("Could not find datatype of property '%s': %v", propertyName, err)
-	}
-
-	if propertyDataType.IsPrimitive() {
-		return NewErrInvalidUserInput("property '%s' is a primitive datatype, not a reference-type", propertyName)
-	}
-
-	return nil
+	return validateReferenceSchema(req.Class, req.Property, schema)
 }
