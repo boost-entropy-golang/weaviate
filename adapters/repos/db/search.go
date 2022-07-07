@@ -14,23 +14,25 @@ package db
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/semi-technologies/weaviate/adapters/repos/db/refcache"
-	"github.com/semi-technologies/weaviate/adapters/repos/db/vector/hnsw"
 	"github.com/semi-technologies/weaviate/entities/additional"
 	"github.com/semi-technologies/weaviate/entities/aggregation"
 	"github.com/semi-technologies/weaviate/entities/filters"
 	"github.com/semi-technologies/weaviate/entities/schema"
 	"github.com/semi-technologies/weaviate/entities/search"
 	"github.com/semi-technologies/weaviate/entities/storobj"
+	"github.com/semi-technologies/weaviate/usecases/objects"
 	"github.com/semi-technologies/weaviate/usecases/traverser"
 )
 
 func (db *DB) Aggregate(ctx context.Context,
-	params aggregation.Params) (*aggregation.Result, error) {
+	params aggregation.Params,
+) (*aggregation.Result, error) {
 	idx := db.GetIndex(schema.ClassName(params.ClassName))
 	if idx == nil {
 		return nil, fmt.Errorf("tried to browse non-existing index for %s", params.ClassName)
@@ -44,7 +46,8 @@ func (db *DB) GetQueryMaximumResults() int {
 }
 
 func (db *DB) ClassSearch(ctx context.Context,
-	params traverser.GetParams) ([]search.Result, error) {
+	params traverser.GetParams,
+) ([]search.Result, error) {
 	idx := db.GetIndex(schema.ClassName(params.ClassName))
 	if idx == nil {
 		return nil, fmt.Errorf("tried to browse non-existing index for %s", params.ClassName)
@@ -71,16 +74,10 @@ func (db *DB) ClassSearch(ctx context.Context,
 }
 
 func (db *DB) VectorClassSearch(ctx context.Context,
-	params traverser.GetParams) ([]search.Result, error) {
+	params traverser.GetParams,
+) ([]search.Result, error) {
 	if params.SearchVector == nil {
 		return db.ClassSearch(ctx, params)
-	}
-
-	// some vec index configs are not compatible with some params.
-	// for example, certainty cannot be used when the class' vec
-	// index is configured to use l2-squared distance
-	if err := db.checkVectorIndexDistanceCompatibility(params); err != nil {
-		return nil, err
 	}
 
 	totalLimit, err := db.getTotalLimit(params.Pagination, params.AdditionalProperties)
@@ -110,47 +107,32 @@ func (db *DB) VectorClassSearch(ctx context.Context,
 }
 
 func extractDistanceFromParams(params traverser.GetParams) float32 {
-	// we need to check these conditions first before calling
-	// traverser.ExtractCertaintyFromParams, because it will
-	// panic if these conditions are not met
-	if params.NearVector == nil && params.NearObject == nil &&
-		len(params.ModuleParams) == 0 {
-		return 0
-	}
-
-	if params.NearVector != nil && params.NearVector.Distance != 0 {
-		return float32(params.NearVector.Distance) * 2
-	}
-
-	if params.NearObject != nil && params.NearObject.Distance != 0 {
-		return float32(params.NearObject.Distance) * 2
-	}
-
 	certainty := traverser.ExtractCertaintyFromParams(params)
-	return float32(1-certainty) * 2
+	if certainty != 0 {
+		return float32(additional.CertaintyToDist(certainty))
+	}
+
+	dist, _ := traverser.ExtractDistanceFromParams(params)
+	return float32(dist)
 }
 
 func (db *DB) VectorSearch(ctx context.Context, vector []float32, offset, limit int,
-	filters *filters.LocalFilter) ([]search.Result, error) {
+	filters *filters.LocalFilter,
+) ([]search.Result, error) {
 	var found search.Results
 
 	wg := &sync.WaitGroup{}
 	mutex := &sync.Mutex{}
 	var searchErrors []error
 	totalLimit := offset + limit
-	emptyAdditional := additional.Properties{
-		// TODO: the fact that we need the vector for resorting shows that something
-		// is not ideal here. We already get distances from the vector search, why not
-		// pass them along and use them for sorting?
-		Vector: true,
-	}
+
 	for _, index := range db.indices {
 		wg.Add(1)
 		go func(index *Index, wg *sync.WaitGroup) {
 			defer wg.Done()
 
-			res, _, err := index.objectVectorSearch(
-				ctx, vector, 0, totalLimit, filters, nil, emptyAdditional)
+			objs, dist, err := index.objectVectorSearch(
+				ctx, vector, 0, totalLimit, filters, nil, additional.Properties{})
 			if err != nil {
 				mutex.Lock()
 				searchErrors = append(searchErrors, errors.Wrapf(err, "search index %s", index.ID()))
@@ -158,7 +140,8 @@ func (db *DB) VectorSearch(ctx context.Context, vector []float32, offset, limit 
 			}
 
 			mutex.Lock()
-			found = append(found, storobj.SearchResults(res, emptyAdditional)...)
+			found = append(found, hydrateObjectsIntoSearchResults(objs, dist)...)
+
 			mutex.Unlock()
 		}(index, wg)
 	}
@@ -176,25 +159,56 @@ func (db *DB) VectorSearch(ctx context.Context, vector []float32, offset, limit 
 		return nil, errors.New(msg.String())
 	}
 
-	// TODO: use dists
-	found, err := found.SortByDistanceToVector(vector)
-	if err != nil {
-		return nil, errors.Wrapf(err, "re-sort when merging indices")
-	}
+	sort.Slice(found, func(i, j int) bool {
+		return found[i].Dist < found[j].Dist
+	})
 
 	// not enriching by refs, as a vector search result cannot provide
 	// SelectProperties
 	return db.getSearchResults(found, offset, limit), nil
 }
 
+func hydrateObjectsIntoSearchResults(objs []*storobj.Object, dists []float32) search.Results {
+	res := storobj.SearchResults(objs, additional.Properties{})
+	for i := range res {
+		res[i].Dist = dists[i]
+		res[i].Certainty = float32(additional.DistToCertainty(float64(dists[i])))
+	}
+	return res
+}
+
+// Query a specific class
+func (d *DB) Query(ctx context.Context, q *objects.QueryInput) (search.Results, *objects.Error) {
+	totalLimit := q.Offset + q.Limit
+	if totalLimit == 0 {
+		return nil, nil
+	}
+	if err := d.validateSort(q.Sort); err != nil {
+		return nil, &objects.Error{Msg: "sorting", Code: objects.StatusBadRequest, Err: err}
+	}
+	idx := d.GetIndex(schema.ClassName(q.Class))
+	if idx == nil {
+		return nil, &objects.Error{Msg: "class not found " + q.Class, Code: objects.StatusNotFound}
+	}
+	res, err := idx.objectSearch(ctx, totalLimit, q.Filters, nil, q.Sort, q.Additional)
+	if err != nil {
+		return nil, &objects.Error{Msg: "search index " + idx.ID(), Code: objects.StatusInternalServerError, Err: err}
+	}
+	return d.getSearchResults(storobj.SearchResults(res, q.Additional), q.Offset, q.Limit), nil
+}
+
+// ObjectSearch search each index.
+// Deprecated by Query which seacrhces a specific index
 func (d *DB) ObjectSearch(ctx context.Context, offset, limit int,
-	filters *filters.LocalFilter, sort []filters.Sort, additional additional.Properties) (search.Results, error) {
+	filters *filters.LocalFilter, sort []filters.Sort, additional additional.Properties,
+) (search.Results, error) {
 	return d.objectSearch(ctx, offset, limit, filters, sort, additional)
 }
 
 func (d *DB) objectSearch(ctx context.Context, offset, limit int,
 	filters *filters.LocalFilter, sort []filters.Sort,
-	additional additional.Properties) (search.Results, error) {
+	additional additional.Properties,
+) (search.Results, error) {
 	var found []*storobj.Object
 
 	if err := d.validateSort(sort); err != nil {
@@ -240,7 +254,8 @@ func (d *DB) validateSort(sort []filters.Sort) error {
 }
 
 func (d *DB) enrichRefsForList(ctx context.Context, objs search.Results,
-	props search.SelectProperties, additional additional.Properties) (search.Results, error) {
+	props search.SelectProperties, additional additional.Properties,
+) (search.Results, error) {
 	res, err := refcache.NewResolver(refcache.NewCacher(d, d.logger)).
 		Do(ctx, objs, props, additional)
 	if err != nil {
@@ -301,36 +316,4 @@ func (db *DB) getLimit(limit int) int {
 		return int(db.config.QueryLimit)
 	}
 	return limit
-}
-
-func (db *DB) checkVectorIndexDistanceCompatibility(params traverser.GetParams) error {
-	idx := db.GetIndex(schema.ClassName(params.ClassName))
-	if idx == nil {
-		return fmt.Errorf("tried to browse non-existing index for %s", params.ClassName)
-	}
-
-	hnswConfig, ok := idx.vectorIndexUserConfig.(hnsw.UserConfig)
-	if !ok {
-		return errors.Errorf("hnsw vector index: config is not hnsw.UserConfig: %T",
-			idx.vectorIndexUserConfig)
-	}
-
-	if hnswConfig.Distance == hnsw.DistanceL2Squared {
-		incompatErr := errors.Errorf(
-			"can't use certainty when vector index is configured with l2-squared distance")
-
-		if params.NearVector != nil && params.NearVector.Certainty != 0 {
-			return incompatErr
-		}
-
-		if params.NearObject != nil && params.NearObject.Certainty != 0 {
-			return incompatErr
-		}
-
-		if params.ModuleParams != nil && traverser.ExtractCertaintyFromParams(params) != 0 {
-			return incompatErr
-		}
-	}
-
-	return nil
 }
