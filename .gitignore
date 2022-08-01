@@ -86,6 +86,7 @@ data/
 data-node2/
 snapshots/
 snapshots-node2/
+snapshots-s3/
 docker-compose/runtime-stable/data
 docker-compose/runtime-unstable/data
 c.out
@@ -109,3 +110,7 @@ vendor/
 
 # benchmark results
 test/benchmark/benchmark_results.json
+# benchmark results files copied from a remote run
+benchmark_results_*.json
+
+
