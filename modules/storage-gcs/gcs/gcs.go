@@ -14,9 +14,9 @@ package gcs
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
+	"path"
 
 	"cloud.google.com/go/storage"
 	"github.com/pkg/errors"
@@ -101,35 +101,15 @@ func (g *gcs) saveFile(ctx context.Context, bucket *storage.BucketHandle,
 	return nil
 }
 
-func (g *gcs) RestoreSnapshot(ctx context.Context, snapshotID string) error {
-	bucketName := g.config.BucketName()
-	projectID := g.projectID
-	// Find bucket
-	bucketExists := false
-	it := g.client.Buckets(ctx, projectID)
-	for {
-		bucketAttrs, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return errors.Wrap(err, "list buckets")
-		}
-		if bucketAttrs.Name == bucketName {
-			bucketExists = true
-			break
-		}
+func (g *gcs) RestoreSnapshot(ctx context.Context, className, snapshotID string) error {
+	bucket, err := g.findBucket(ctx)
+	if err != nil || bucket == nil {
+		return errors.Wrap(err, "snapshot bucket does not exist")
 	}
-
-	// Bucket must exist to restore from it
-	if !bucketExists {
-		errors.New("snapshot bucket does not exist")
-	}
-	bucketHandle := g.client.Bucket(bucketName)
 
 	// Download metadata for snapshot
-	objectName := fmt.Sprintf("%s/snapshot.json", snapshotID)
-	reader, err := bucketHandle.Object(objectName).NewReader(ctx)
+	objectName := makeObjectName(className, snapshotID, "snapshot.json")
+	reader, err := bucket.Object(objectName).NewReader(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "new reader: %v", objectName)
 	}
@@ -151,9 +131,9 @@ func (g *gcs) RestoreSnapshot(ctx context.Context, snapshotID string) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Wrapf(err, "store snapshot aborted")
 		}
-		objectName := fmt.Sprintf("%s/%s", snapshotID, srcRelPath)
-		filePath := fmt.Sprintf("%s/%s", g.dataPath, srcRelPath)
-		if err := g.saveFile(ctx, bucketHandle, snapshotID, objectName, filePath); err != nil {
+		objectName := makeObjectName(className, snapshotID, srcRelPath)
+		filePath := makeFilePath(g.dataPath, srcRelPath)
+		if err := g.saveFile(ctx, bucket, snapshotID, objectName, filePath); err != nil {
 			return errors.Wrap(err, "put file")
 		}
 	}
@@ -161,45 +141,31 @@ func (g *gcs) RestoreSnapshot(ctx context.Context, snapshotID string) error {
 }
 
 func (g *gcs) StoreSnapshot(ctx context.Context, snapshot *snapshots.Snapshot) error {
-	bucketName := g.config.BucketName()
-	projectID := g.projectID
-	// create bucket
-	bucketExists := false
-	it := g.client.Buckets(ctx, projectID)
-	for {
-		bucketAttrs, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
+	bucket, err := g.findBucket(ctx)
+	if err != nil {
+		return err
+	}
+
+	if bucket == nil {
+		bucket, err = g.createBucket(ctx)
 		if err != nil {
-			return errors.Wrap(err, "list buckets")
-		}
-		if bucketAttrs.Name == bucketName {
-			bucketExists = true
-			break
+			return err
 		}
 	}
-	if !bucketExists {
-		err := g.client.Bucket(bucketName).Create(ctx, projectID, nil)
-		if err != nil {
-			errors.Wrap(err, "create bucket")
-		}
-	}
-	bucketHandle := g.client.Bucket(bucketName)
+
 	// save files
-	snapshotID := snapshot.ID
 	for _, srcRelPath := range snapshot.Files {
 		if err := ctx.Err(); err != nil {
-			return errors.Wrapf(err, "store snapshot aborted")
+			return errors.Wrap(err, "store snapshot aborted")
 		}
-		objectName := fmt.Sprintf("%s/%s", snapshotID, srcRelPath)
-		filePath := fmt.Sprintf("%s/%s", g.dataPath, srcRelPath)
+		objectName := makeObjectName(snapshot.ClassName, snapshot.ID, srcRelPath)
+		filePath := makeFilePath(g.dataPath, srcRelPath)
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			return errors.Wrapf(err, "read file: %v", filePath)
 		}
 
-		if err := g.putFile(ctx, bucketHandle, snapshotID, objectName, content); err != nil {
+		if err := g.putFile(ctx, bucket, snapshot.ID, objectName, content); err != nil {
 			return errors.Wrap(err, "put file")
 		}
 	}
@@ -208,11 +174,74 @@ func (g *gcs) StoreSnapshot(ctx context.Context, snapshot *snapshots.Snapshot) e
 	if err != nil {
 		return errors.Wrapf(err, "marshal meta")
 	}
-	objectName := fmt.Sprintf("%s/snapshot.json", snapshotID)
-	if err := g.putFile(ctx, bucketHandle, snapshotID, objectName, content); err != nil {
+	objectName := makeObjectName(snapshot.ClassName, snapshot.ID, "snapshot.json")
+	if err := g.putFile(ctx, bucket, snapshot.ID, objectName, content); err != nil {
 		return errors.Wrap(err, "put file")
 	}
 	return nil
+}
+
+func (g *gcs) GetMetaStatus(ctx context.Context, className, snapshotID string) (string, error) {
+	bucket, err := g.findBucket(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "get snapshot status")
+	}
+
+	if bucket == nil {
+		return "", errors.Wrap(errors.New("bucket not found"),
+			"get snapshot status")
+	}
+
+	objectName := makeObjectName(className, snapshotID, "snapshot.json")
+	contents, err := g.getObject(ctx, bucket, snapshotID, objectName)
+	if err != nil {
+		return "", errors.Wrap(err, "get snapshot status")
+	}
+
+	var snapshot snapshots.Snapshot
+	err = json.Unmarshal(contents, &snapshot)
+	if err != nil {
+		return "", errors.Wrap(err, "get snapshot status")
+	}
+
+	return string(snapshot.Status), nil
+}
+
+func (g *gcs) SetMetaStatus(ctx context.Context, className, snapshotID, status string) error {
+	bucket, err := g.findBucket(ctx)
+	if err != nil {
+		return errors.Wrap(err, "set snapshot status")
+	}
+
+	if bucket == nil {
+		return errors.Wrap(errors.New("bucket not found"),
+			"set snapshot status")
+	}
+
+	objectName := makeObjectName(className, snapshotID, "snapshot.json")
+	contents, err := g.getObject(ctx, bucket, snapshotID, objectName)
+	if err != nil {
+		return errors.Wrap(err, "set snapshot status")
+	}
+
+	var snapshot snapshots.Snapshot
+	err = json.Unmarshal(contents, &snapshot)
+	if err != nil {
+		return errors.Wrap(err, "set snapshot status")
+	}
+
+	snapshot.Status = snapshots.Status(status)
+	b, err := json.Marshal(&snapshot)
+	if err != nil {
+		return errors.Wrap(err, "set snapshot status")
+	}
+
+	return g.putFile(ctx, bucket, snapshotID, objectName, b)
+}
+
+func (g *gcs) DestinationPath(className, snapshotID string) string {
+	// TODO implement
+	return ""
 }
 
 func (g *gcs) putFile(ctx context.Context, bucket *storage.BucketHandle,
@@ -231,4 +260,48 @@ func (g *gcs) putFile(ctx context.Context, bucket *storage.BucketHandle,
 		return errors.Wrapf(err, "close writer for file: %v", objectName)
 	}
 	return nil
+}
+
+func (g *gcs) findBucket(ctx context.Context) (*storage.BucketHandle, error) {
+	var (
+		bucketName   = g.config.BucketName()
+		projectID    = g.projectID
+		bucketExists bool
+	)
+
+	for it := g.client.Buckets(ctx, projectID); ; {
+		bucketAttrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, errors.Wrap(err, "find bucket")
+		}
+		if bucketAttrs.Name == bucketName {
+			bucketExists = true
+			break
+		}
+	}
+
+	if !bucketExists {
+		return nil, nil
+	}
+
+	return g.client.Bucket(bucketName), nil
+}
+
+func (g *gcs) createBucket(ctx context.Context) (*storage.BucketHandle, error) {
+	err := g.client.Bucket(g.config.BucketName()).Create(ctx, g.projectID, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "create bucket")
+	}
+	return g.client.Bucket(g.config.BucketName()), nil
+}
+
+func makeObjectName(parts ...string) string {
+	return path.Join(parts...)
+}
+
+func makeFilePath(parts ...string) string {
+	return path.Join(parts...)
 }
