@@ -60,6 +60,14 @@ func New(config Config, logger logrus.FieldLogger, dataPath string) (*s3, error)
 	return &s3{client, config, logger, dataPath}, nil
 }
 
+func makeObjectName(parts ...string) string {
+	return path.Join(parts...)
+}
+
+func makeFilePath(parts ...string) string {
+	return path.Join(parts...)
+}
+
 func (s *s3) StoreSnapshot(ctx context.Context, snapshot *snapshots.Snapshot) error {
 	// create bucket
 	bucketName := s.config.BucketName()
@@ -171,8 +179,8 @@ func (s *s3) SetMetaStatus(ctx context.Context, className, snapshotID, status st
 }
 
 func (s *s3) DestinationPath(className, snapshotID string) string {
-	// TODO implement
-	return ""
+	return "s3://" + path.Join(s.config.BucketName(),
+		makeObjectName(className, snapshotID, "snapshot.json"))
 }
 
 func (s *s3) getSnapshotFromBucket(ctx context.Context, className, snapshotID string) (*snapshots.Snapshot, error) {
@@ -194,12 +202,4 @@ func (s *s3) getSnapshotFromBucket(ctx context.Context, className, snapshotID st
 	}
 
 	return &snapshot, nil
-}
-
-func makeObjectName(parts ...string) string {
-	return path.Join(parts...)
-}
-
-func makeFilePath(parts ...string) string {
-	return path.Join(parts...)
 }
