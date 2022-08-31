@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/semi-technologies/weaviate/entities/snapshots"
+	"github.com/semi-technologies/weaviate/entities/backup"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 )
@@ -83,7 +83,7 @@ func TestSnapshotStorage_StoreSnapshot(t *testing.T) {
 	})
 
 	t.Run("copies snapshot data", func(t *testing.T) {
-		snapshot := createSnapshotInstance(t, testDir)
+		snapshot := createBackupInstance(t, testDir)
 		ctxSnapshot := context.Background()
 
 		module := New()
@@ -96,11 +96,11 @@ func TestSnapshotStorage_StoreSnapshot(t *testing.T) {
 
 		var expectedFilePath string
 		var info os.FileInfo
-		for _, filePath := range snapshot.Files {
-			expectedFilePath = module.makeSnapshotFilePath(snapshot.ClassName, snapshot.ID, filePath)
+		for _, file := range snapshot.Files {
+			expectedFilePath = module.makeSnapshotFilePath(snapshot.ClassName, snapshot.ID, file.Path)
 			info, err = os.Stat(expectedFilePath)
 			assert.Nil(t, err) // file exists
-			orgInfo, err := os.Stat(filePath)
+			orgInfo, err := os.Stat(file.Path)
 			assert.Nil(t, err) // file exists
 
 			assert.Equal(t, orgInfo.Size(), info.Size())
@@ -154,7 +154,7 @@ func TestSnapshotStorage_MetaStatus(t *testing.T) {
 	defer removeDir(t, snapshotsMainDir)
 
 	t.Run("store snapshot", func(t *testing.T) {
-		snapshot := createSnapshotInstance(t, testDir)
+		snapshot := createBackupInstance(t, testDir)
 		testClass = snapshot.ClassName
 		testId = snapshot.ID
 		ctxSnapshot := context.Background()
@@ -171,7 +171,7 @@ func TestSnapshotStorage_MetaStatus(t *testing.T) {
 		module := New()
 		module.snapshotsPath = snapshotsAbsolutePath
 
-		err := module.SetMetaStatus(context.Background(), testClass, testId, string(snapshots.CreateStarted))
+		err := module.SetMetaStatus(context.Background(), testClass, testId, string(backup.CreateStarted))
 		assert.Nil(t, err)
 	})
 
@@ -181,7 +181,7 @@ func TestSnapshotStorage_MetaStatus(t *testing.T) {
 
 		meta, err := module.GetMeta(context.Background(), testClass, testId)
 		assert.Nil(t, err)
-		assert.Equal(t, string(snapshots.CreateStarted), meta.Status)
+		assert.Equal(t, string(backup.CreateStarted), meta.Status)
 	})
 }
 
@@ -204,13 +204,17 @@ func removeDir(t *testing.T, dirPath string) {
 	}
 }
 
-func createSnapshotInstance(t *testing.T, dirPath string) *snapshots.Snapshot {
+func createBackupInstance(t *testing.T, dirPath string) *backup.Snapshot {
 	startedAt := time.Now()
 
 	filePaths := createTestFiles(t, dirPath)
+	files := make([]backup.SnapshotFile, len(filePaths))
+	for i := range filePaths {
+		files[i] = backup.SnapshotFile{Path: filePaths[i]}
+	}
 
-	snap := snapshots.New("classname", "snapshot_id", startedAt)
-	snap.Files = filePaths
+	snap := backup.NewSnapshot("classname", "snapshot_id", startedAt)
+	snap.Files = files
 	snap.CompletedAt = time.Now()
 	return snap
 }

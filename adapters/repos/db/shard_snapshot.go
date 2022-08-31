@@ -16,11 +16,11 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
-	"github.com/semi-technologies/weaviate/entities/snapshots"
+	"github.com/semi-technologies/weaviate/entities/backup"
 	"golang.org/x/sync/errgroup"
 )
 
-func (s *Shard) createSnapshot(ctx context.Context, snap *snapshots.Snapshot) error {
+func (s *Shard) createBackup(ctx context.Context, snap *backup.Snapshot) error {
 	var g errgroup.Group
 
 	g.Go(func() error {
@@ -80,7 +80,7 @@ func (s *Shard) resumeMaintenanceCycles(ctx context.Context) error {
 	return nil
 }
 
-func (s *Shard) createStoreLevelSnapshot(ctx context.Context) ([]string, error) {
+func (s *Shard) createStoreLevelSnapshot(ctx context.Context) ([]backup.SnapshotFile, error) {
 	var g errgroup.Group
 
 	g.Go(func() error {
@@ -101,15 +101,25 @@ func (s *Shard) createStoreLevelSnapshot(ctx context.Context) ([]string, error) 
 		return nil, err
 	}
 
-	files, err := s.store.ListFiles(ctx)
+	paths, err := s.store.ListFiles(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "create snapshot")
+	}
+
+	files := make([]backup.SnapshotFile, len(paths))
+	for i, pth := range paths {
+		files[i] = backup.SnapshotFile{
+			Path:  pth,
+			Class: s.index.Config.ClassName.String(),
+			Node:  s.index.Config.NodeName,
+			Shard: s.name,
+		}
 	}
 
 	return files, nil
 }
 
-func (s *Shard) createVectorIndexLevelSnapshot(ctx context.Context) ([]string, error) {
+func (s *Shard) createVectorIndexLevelSnapshot(ctx context.Context) ([]backup.SnapshotFile, error) {
 	var g errgroup.Group
 
 	g.Go(func() error {
@@ -130,15 +140,25 @@ func (s *Shard) createVectorIndexLevelSnapshot(ctx context.Context) ([]string, e
 		return nil, err
 	}
 
-	files, err := s.vectorIndex.ListFiles(ctx)
+	paths, err := s.vectorIndex.ListFiles(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "create snapshot")
+	}
+
+	files := make([]backup.SnapshotFile, len(paths))
+	for i, pth := range paths {
+		files[i] = backup.SnapshotFile{
+			Path:  pth,
+			Class: s.index.Config.ClassName.String(),
+			Node:  s.index.Config.NodeName,
+			Shard: s.name,
+		}
 	}
 
 	return files, nil
 }
 
-func (s *Shard) readSnapshotMetadata() (*snapshots.ShardMetadata, error) {
+func (s *Shard) readSnapshotMetadata() (*backup.ShardMetadata, error) {
 	counterContents, err := s.readIndexCounter()
 	if err != nil {
 		return nil, errors.Wrapf(err,
@@ -157,7 +177,7 @@ func (s *Shard) readSnapshotMetadata() (*snapshots.ShardMetadata, error) {
 			"failed to read shard version for shard '%s'", s.name)
 	}
 
-	return &snapshots.ShardMetadata{
+	return &backup.ShardMetadata{
 		DocIDCounter:      counterContents,
 		PropLengthTracker: propLenContents,
 		ShardVersion:      shardVersion,
