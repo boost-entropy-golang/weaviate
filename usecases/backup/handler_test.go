@@ -9,7 +9,7 @@
 //  CONTACT: hello@semi.technology
 //
 
-package backups
+package backup
 
 import (
 	"context"
@@ -18,9 +18,16 @@ import (
 	"github.com/semi-technologies/weaviate/entities/snapshots"
 )
 
-type BackupManager interface {
-	CreateBackup(ctx context.Context, className, storageName, snapshotID string) (*snapshots.CreateMeta, error)
-	RestoreBackup(ctx context.Context, className, storageName, snapshotID string) (*snapshots.RestoreMeta, *snapshots.Snapshot, error)
-	CreateBackupStatus(ctx context.Context, className, storageName, snapshotID string) (*models.SnapshotMeta, error)
-	DestinationPath(storageName, className, snapshotID string) (string, error)
+type fakeSchemaManger struct{}
+
+func (f *fakeSchemaManger) RestoreClass(context.Context, *models.Principal,
+	*models.Class, *snapshots.Snapshot,
+) error {
+	return nil
+}
+
+type fakeAuthorizer struct{}
+
+func (f *fakeAuthorizer) Authorize(principal *models.Principal, verb, resource string) error {
+	return nil
 }
