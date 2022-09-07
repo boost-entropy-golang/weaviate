@@ -37,7 +37,7 @@ type BackupsCreateStatusOK struct {
 	/*
 	  In: Body
 	*/
-	Payload *models.BackupCreateMeta `json:"body,omitempty"`
+	Payload *models.BackupCreateStatusResponse `json:"body,omitempty"`
 }
 
 // NewBackupsCreateStatusOK creates BackupsCreateStatusOK with default headers values
@@ -47,13 +47,13 @@ func NewBackupsCreateStatusOK() *BackupsCreateStatusOK {
 }
 
 // WithPayload adds the payload to the backups create status o k response
-func (o *BackupsCreateStatusOK) WithPayload(payload *models.BackupCreateMeta) *BackupsCreateStatusOK {
+func (o *BackupsCreateStatusOK) WithPayload(payload *models.BackupCreateStatusResponse) *BackupsCreateStatusOK {
 	o.Payload = payload
 	return o
 }
 
 // SetPayload sets the payload to the backups create status o k response
-func (o *BackupsCreateStatusOK) SetPayload(payload *models.BackupCreateMeta) {
+func (o *BackupsCreateStatusOK) SetPayload(payload *models.BackupCreateStatusResponse) {
 	o.Payload = payload
 }
 
@@ -176,6 +176,51 @@ func (o *BackupsCreateStatusNotFound) SetPayload(payload *models.ErrorResponse) 
 func (o *BackupsCreateStatusNotFound) WriteResponse(rw http.ResponseWriter, producer runtime.Producer) {
 
 	rw.WriteHeader(404)
+	if o.Payload != nil {
+		payload := o.Payload
+		if err := producer.Produce(rw, payload); err != nil {
+			panic(err) // let the recovery middleware deal with this
+		}
+	}
+}
+
+// BackupsCreateStatusUnprocessableEntityCode is the HTTP code returned for type BackupsCreateStatusUnprocessableEntity
+const BackupsCreateStatusUnprocessableEntityCode int = 422
+
+/*
+BackupsCreateStatusUnprocessableEntity Invalid backup restoration status attempt.
+
+swagger:response backupsCreateStatusUnprocessableEntity
+*/
+type BackupsCreateStatusUnprocessableEntity struct {
+
+	/*
+	  In: Body
+	*/
+	Payload *models.ErrorResponse `json:"body,omitempty"`
+}
+
+// NewBackupsCreateStatusUnprocessableEntity creates BackupsCreateStatusUnprocessableEntity with default headers values
+func NewBackupsCreateStatusUnprocessableEntity() *BackupsCreateStatusUnprocessableEntity {
+
+	return &BackupsCreateStatusUnprocessableEntity{}
+}
+
+// WithPayload adds the payload to the backups create status unprocessable entity response
+func (o *BackupsCreateStatusUnprocessableEntity) WithPayload(payload *models.ErrorResponse) *BackupsCreateStatusUnprocessableEntity {
+	o.Payload = payload
+	return o
+}
+
+// SetPayload sets the payload to the backups create status unprocessable entity response
+func (o *BackupsCreateStatusUnprocessableEntity) SetPayload(payload *models.ErrorResponse) {
+	o.Payload = payload
+}
+
+// WriteResponse to the client
+func (o *BackupsCreateStatusUnprocessableEntity) WriteResponse(rw http.ResponseWriter, producer runtime.Producer) {
+
+	rw.WriteHeader(422)
 	if o.Payload != nil {
 		payload := o.Payload
 		if err := producer.Produce(rw, payload); err != nil {

@@ -58,6 +58,12 @@ func (o *BackupsCreateStatusReader) ReadResponse(response runtime.ClientResponse
 			return nil, err
 		}
 		return nil, result
+	case 422:
+		result := NewBackupsCreateStatusUnprocessableEntity()
+		if err := result.readResponse(response, consumer, o.formats); err != nil {
+			return nil, err
+		}
+		return nil, result
 	case 500:
 		result := NewBackupsCreateStatusInternalServerError()
 		if err := result.readResponse(response, consumer, o.formats); err != nil {
@@ -81,20 +87,20 @@ BackupsCreateStatusOK handles this case with default header values.
 Backup creation status successfully returned
 */
 type BackupsCreateStatusOK struct {
-	Payload *models.BackupCreateMeta
+	Payload *models.BackupCreateStatusResponse
 }
 
 func (o *BackupsCreateStatusOK) Error() string {
-	return fmt.Sprintf("[GET /backups/{storageName}/{id}][%d] backupsCreateStatusOK  %+v", 200, o.Payload)
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusOK  %+v", 200, o.Payload)
 }
 
-func (o *BackupsCreateStatusOK) GetPayload() *models.BackupCreateMeta {
+func (o *BackupsCreateStatusOK) GetPayload() *models.BackupCreateStatusResponse {
 	return o.Payload
 }
 
 func (o *BackupsCreateStatusOK) readResponse(response runtime.ClientResponse, consumer runtime.Consumer, formats strfmt.Registry) error {
 
-	o.Payload = new(models.BackupCreateMeta)
+	o.Payload = new(models.BackupCreateStatusResponse)
 
 	// response payload
 	if err := consumer.Consume(response.Body(), o.Payload); err != nil && err != io.EOF {
@@ -118,7 +124,7 @@ type BackupsCreateStatusUnauthorized struct {
 }
 
 func (o *BackupsCreateStatusUnauthorized) Error() string {
-	return fmt.Sprintf("[GET /backups/{storageName}/{id}][%d] backupsCreateStatusUnauthorized ", 401)
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusUnauthorized ", 401)
 }
 
 func (o *BackupsCreateStatusUnauthorized) readResponse(response runtime.ClientResponse, consumer runtime.Consumer, formats strfmt.Registry) error {
@@ -141,7 +147,7 @@ type BackupsCreateStatusForbidden struct {
 }
 
 func (o *BackupsCreateStatusForbidden) Error() string {
-	return fmt.Sprintf("[GET /backups/{storageName}/{id}][%d] backupsCreateStatusForbidden  %+v", 403, o.Payload)
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusForbidden  %+v", 403, o.Payload)
 }
 
 func (o *BackupsCreateStatusForbidden) GetPayload() *models.ErrorResponse {
@@ -175,7 +181,7 @@ type BackupsCreateStatusNotFound struct {
 }
 
 func (o *BackupsCreateStatusNotFound) Error() string {
-	return fmt.Sprintf("[GET /backups/{storageName}/{id}][%d] backupsCreateStatusNotFound  %+v", 404, o.Payload)
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusNotFound  %+v", 404, o.Payload)
 }
 
 func (o *BackupsCreateStatusNotFound) GetPayload() *models.ErrorResponse {
@@ -183,6 +189,40 @@ func (o *BackupsCreateStatusNotFound) GetPayload() *models.ErrorResponse {
 }
 
 func (o *BackupsCreateStatusNotFound) readResponse(response runtime.ClientResponse, consumer runtime.Consumer, formats strfmt.Registry) error {
+
+	o.Payload = new(models.ErrorResponse)
+
+	// response payload
+	if err := consumer.Consume(response.Body(), o.Payload); err != nil && err != io.EOF {
+		return err
+	}
+
+	return nil
+}
+
+// NewBackupsCreateStatusUnprocessableEntity creates a BackupsCreateStatusUnprocessableEntity with default headers values
+func NewBackupsCreateStatusUnprocessableEntity() *BackupsCreateStatusUnprocessableEntity {
+	return &BackupsCreateStatusUnprocessableEntity{}
+}
+
+/*
+BackupsCreateStatusUnprocessableEntity handles this case with default header values.
+
+Invalid backup restoration status attempt.
+*/
+type BackupsCreateStatusUnprocessableEntity struct {
+	Payload *models.ErrorResponse
+}
+
+func (o *BackupsCreateStatusUnprocessableEntity) Error() string {
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusUnprocessableEntity  %+v", 422, o.Payload)
+}
+
+func (o *BackupsCreateStatusUnprocessableEntity) GetPayload() *models.ErrorResponse {
+	return o.Payload
+}
+
+func (o *BackupsCreateStatusUnprocessableEntity) readResponse(response runtime.ClientResponse, consumer runtime.Consumer, formats strfmt.Registry) error {
 
 	o.Payload = new(models.ErrorResponse)
 
@@ -209,7 +249,7 @@ type BackupsCreateStatusInternalServerError struct {
 }
 
 func (o *BackupsCreateStatusInternalServerError) Error() string {
-	return fmt.Sprintf("[GET /backups/{storageName}/{id}][%d] backupsCreateStatusInternalServerError  %+v", 500, o.Payload)
+	return fmt.Sprintf("[GET /backups/{backend}/{id}][%d] backupsCreateStatusInternalServerError  %+v", 500, o.Payload)
 }
 
 func (o *BackupsCreateStatusInternalServerError) GetPayload() *models.ErrorResponse {
