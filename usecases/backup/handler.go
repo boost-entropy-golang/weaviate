@@ -50,6 +50,10 @@ type schemaManger interface {
 	) error
 }
 
+type nodeResolver interface {
+	NodeHostname(nodeName string) (string, bool)
+}
+
 type RestoreStatus struct {
 	Path        string
 	StartedAt   time.Time
@@ -195,8 +199,8 @@ func (m *Manager) RestorationStatus(ctx context.Context, principal *models.Princ
 
 // OnCanCommit will be triggered when coordinator asks the node to participate
 // in a distributed backup operation
-func (m *Manager) OnCanCommit(ctx context.Context, pr *models.Principal, req *Request) CanCommitResponse {
-	ret := CanCommitResponse{Method: req.Method, ID: req.ID}
+func (m *Manager) OnCanCommit(ctx context.Context, pr *models.Principal, req *Request) *CanCommitResponse {
+	ret := &CanCommitResponse{Method: req.Method, ID: req.ID}
 	store, err := backend(m.backends, req.Backend)
 	if err != nil {
 		ret.Err = fmt.Sprintf("no backup backend %q, did you enable the right module?", req.Backend)
@@ -259,6 +263,20 @@ func (m *Manager) OnAbort(ctx context.Context, req *AbortRequest) error {
 		return fmt.Errorf("%w: %s", errUnknownOp, req.Method)
 
 	}
+}
+
+func (m *Manager) OnStatus(ctx context.Context, req *StatusRequest) (*StatusResponse, error) {
+	st, err := m.backupper.OnStatus(ctx, req)
+	ret := StatusResponse{
+		Method: req.Method,
+		ID:     req.ID,
+		Status: st.Status,
+	}
+	if err != nil {
+		ret.Status = backup.Failed
+		ret.Err = err.Error()
+	}
+	return &ret, nil
 }
 
 func (m *Manager) validateBackupRequest(ctx context.Context, store objectStore, req *BackupRequest) ([]string, error) {

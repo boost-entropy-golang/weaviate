@@ -84,10 +84,11 @@ type selector interface {
 // - The coordinator will try to repair previous DBROs whenever it is possible
 type coordinator struct {
 	// dependencies
-	selector selector
-	client   client
-	store    objectStore
-	log      logrus.FieldLogger
+	selector     selector
+	client       client
+	store        objectStore
+	log          logrus.FieldLogger
+	nodeResolver nodeResolver
 
 	// state
 	Participants map[string]participantStatus
@@ -106,12 +107,14 @@ func NewCoordinator(
 	selector selector,
 	client client,
 	log logrus.FieldLogger,
+	nodeResolver nodeResolver,
 ) *coordinator {
 	return &coordinator{
 		selector:           selector,
 		client:             client,
 		store:              store,
 		log:                log,
+		nodeResolver:       nodeResolver,
 		Participants:       make(map[string]participantStatus, 16),
 		timeoutNodeDown:    _TimeoutNodeDown,
 		timeoutQueryStatus: _TimeoutQueryStatus,
@@ -141,8 +144,9 @@ func (c *coordinator) Backup(ctx context.Context, req *Request) error {
 	}
 
 	statusReq := StatusRequest{
-		Method: OpCreate,
-		ID:     req.ID,
+		Method:  OpCreate,
+		ID:      req.ID,
+		Backend: req.Backend,
 	}
 
 	go func() {
@@ -166,8 +170,9 @@ func (c *coordinator) Restore(ctx context.Context, req *backup.DistributedBackup
 	}
 
 	statusReq := StatusRequest{
-		Method: OpRestore,
-		ID:     req.ID,
+		Method:  OpRestore,
+		ID:      req.ID,
+		Backend: req.Backend,
 	}
 
 	go func() {
@@ -201,6 +206,14 @@ func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]stru
 				return ctx.Err()
 			default:
 			}
+
+			// TODO: this is where nodeResolver can be used to find node hostname.
+			//       once found, it can be passed to pair below, rather than `node`
+			//host, found := c.nodeResolver.NodeHostname(node)
+			//if !found {
+			//	return fmt.Errorf("failed to find hostname for node %q", node)
+			//}
+
 			reqChan <- pair{node, &Request{
 				Method:   method,
 				ID:       id,
@@ -230,8 +243,9 @@ func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]stru
 			return nil
 		})
 	}
+	req := &AbortRequest{Method: method, ID: id, Backend: backend}
 	if err := g.Wait(); err != nil {
-		c.abortAll(ctx, id, method, nodes)
+		c.abortAll(ctx, req, nodes)
 		return nil, err
 	}
 	return nodes, nil
@@ -293,7 +307,7 @@ func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes ma
 		st := c.Participants[r.node]
 		if r.err == nil {
 			st.Lasttime, st.Status, st.Reason = now, r.Status, r.Err
-			if r.Err != "" || r.Status == backup.Success || r.Status == backup.Failed {
+			if r.Status == backup.Success || r.Status == backup.Failed {
 				delete(nodes, r.node)
 			}
 		} else if now.Sub(st.Lasttime) > c.timeoutNodeDown {
@@ -346,11 +360,10 @@ func (c *coordinator) commitAll(ctx context.Context, req *StatusRequest, nodes m
 }
 
 // abortAll tells every node to abort transaction
-func (c *coordinator) abortAll(ctx context.Context, id string, method Op, nodes map[string]struct{}) {
+func (c *coordinator) abortAll(ctx context.Context, req *AbortRequest, nodes map[string]struct{}) {
 	for node := range nodes {
-		req := AbortRequest{Method: method, ID: id}
-		if err := c.client.Abort(ctx, node, &req); err != nil {
-			c.log.WithField("action", method).
+		if err := c.client.Abort(ctx, node, req); err != nil {
+			c.log.WithField("action", req.Method).
 				WithField("backup_id", req.ID).
 				WithField("node", node).Errorf("abort %v", err)
 		}
