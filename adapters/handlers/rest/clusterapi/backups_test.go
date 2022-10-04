@@ -20,7 +20,6 @@ import (
 
 	"github.com/semi-technologies/weaviate/adapters/clients"
 	"github.com/semi-technologies/weaviate/adapters/handlers/rest/clusterapi"
-	"github.com/semi-technologies/weaviate/entities/models"
 	"github.com/semi-technologies/weaviate/usecases/backup"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -40,7 +39,8 @@ func TestInternalBackupsAPI(t *testing.T) {
 	hosts := setupClusterAPI(t, nodes)
 
 	for _, node := range nodes {
-		node.backupManager.On("OnCanCommit", &backup.Request{}).Return(&backup.CanCommitResponse{})
+		node.backupManager.On("OnCanCommit", &backup.Request{Method: backup.OpCreate}).
+			Return(&backup.CanCommitResponse{})
 		node.backupManager.On("OnCommit", &backup.StatusRequest{}).Return(nil)
 		node.backupManager.On("OnAbort", &backup.AbortRequest{}).Return(nil)
 	}
@@ -159,7 +159,7 @@ type fakeBackupManager struct {
 	mock.Mock
 }
 
-func (m *fakeBackupManager) OnCanCommit(ctx context.Context, pr *models.Principal, req *backup.Request) *backup.CanCommitResponse {
+func (m *fakeBackupManager) OnCanCommit(ctx context.Context, req *backup.Request) *backup.CanCommitResponse {
 	args := m.Called(req)
 	return args.Get(0).(*backup.CanCommitResponse)
 }
@@ -174,8 +174,7 @@ func (m *fakeBackupManager) OnAbort(ctx context.Context, req *backup.AbortReques
 	return args.Error(0)
 }
 
-func (m *fakeBackupManager) OnStatus(ctx context.Context, req *backup.StatusRequest) (*backup.StatusResponse, error) {
+func (m *fakeBackupManager) OnStatus(ctx context.Context, req *backup.StatusRequest) *backup.StatusResponse {
 	args := m.Called(req)
-	return args.Get(0).(*backup.StatusResponse),
-		args.Error(1)
+	return args.Get(0).(*backup.StatusResponse)
 }

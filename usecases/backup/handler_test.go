@@ -25,7 +25,7 @@ type fakeSchemaManger struct {
 	errRestoreClass error
 }
 
-func (f *fakeSchemaManger) RestoreClass(context.Context, *models.Principal, *backup.ClassDescriptor,
+func (f *fakeSchemaManger) RestoreClass(context.Context, *backup.ClassDescriptor,
 ) error {
 	return f.errRestoreClass
 }
@@ -68,7 +68,7 @@ func TestHandlerValidateCoordinationOperation(t *testing.T) {
 			Backend:  "s3",
 			Duration: time.Millisecond * 20,
 		}
-		resp := bm.OnCanCommit(ctx, nil, &req)
+		resp := bm.OnCanCommit(ctx, &req)
 		assert.Contains(t, resp.Err, "unknown backup operation")
 		assert.Equal(t, resp.Timeout, time.Duration(0))
 	}
@@ -92,5 +92,13 @@ func TestHandlerValidateCoordinationOperation(t *testing.T) {
 		err := bm.OnAbort(ctx, &req)
 		assert.NotNil(t, err)
 		assert.ErrorIs(t, err, errUnknownOp)
+	}
+	{ // OnStatus
+		req := StatusRequest{
+			Method: "Unknown",
+			ID:     "1",
+		}
+		ret := bm.OnStatus(ctx, &req)
+		assert.Contains(t, ret.Err, errUnknownOp.Error())
 	}
 }

@@ -54,7 +54,7 @@ type nodeMap map[string]backup.NodeDescriptor
 // participantStatus tracks status of a participant in a DBRO
 type participantStatus struct {
 	Status   backup.Status
-	Lasttime time.Time
+	LastTime time.Time
 	Reason   string
 }
 
@@ -130,6 +130,10 @@ func (c *coordinator) Backup(ctx context.Context, store coordStore, req *Request
 	if err != nil {
 		return err
 	}
+	// make sure there is no active backup
+	if prevID := c.lastOp.renew(req.ID, store.HomeDir()); prevID != "" {
+		return fmt.Errorf("backup %s already in progress", prevID)
+	}
 	c.descriptor = backup.DistributedBackupDescriptor{
 		StartedAt:     time.Now().UTC(),
 		Status:        backup.Started,
@@ -139,11 +143,10 @@ func (c *coordinator) Backup(ctx context.Context, store coordStore, req *Request
 		Version:       Version,
 		ServerVersion: config.ServerVersion,
 	}
-
-	// make sure there is no active backup
-	if prevID := c.lastOp.renew(req.ID, time.Now(), store.HomeDir()); prevID != "" {
-		return fmt.Errorf("backup %s already in progress", prevID)
+	for key := range c.Participants {
+		delete(c.Participants, key)
 	}
+
 	nodes, err := c.canCommit(ctx, OpCreate)
 	if err != nil {
 		c.lastOp.reset()
@@ -190,13 +193,40 @@ func (c *coordinator) Restore(ctx context.Context, req *backup.DistributedBackup
 	return nil
 }
 
+func (c *coordinator) OnStatus(ctx context.Context, store coordStore, req *StatusRequest) (reqStat, error) {
+	// check if backup is still active
+	st := c.lastOp.get()
+	if st.ID == req.ID {
+		return st, nil
+	}
+
+	// The backup might have been already created.
+	meta, err := store.Meta(ctx, req.ID)
+	if err != nil {
+		path := fmt.Sprintf("%s/%s", req.ID, GlobalBackupFile)
+		return reqStat{}, fmt.Errorf("%w: %q: %v", errMetaNotFound, path, err)
+	}
+
+	return reqStat{
+		Starttime: meta.StartedAt,
+		ID:        req.ID,
+		Path:      store.HomeDir(),
+		Status:    backup.Status(meta.Status),
+	}, nil
+}
+
 // canCommit asks candidates if they agree to participate in DBRO
 // It returns and error if any candidates refuses to participate
-func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]struct{}, error) {
+func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeoutCanCommit)
 	defer cancel()
+
+	type nodeHost struct {
+		node, host string
+	}
+
 	type pair struct {
-		n string
+		n nodeHost
 		r *Request
 	}
 
@@ -215,30 +245,31 @@ func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]stru
 			default:
 			}
 
-			// TODO: this is where nodeResolver can be used to find node hostname.
-			//       once found, it can be passed to pair below, rather than `node`
-			//host, found := c.nodeResolver.NodeHostname(node)
-			//if !found {
-			//	return fmt.Errorf("failed to find hostname for node %q", node)
-			//}
+			host, found := c.nodeResolver.NodeHostname(node)
+			if !found {
+				return fmt.Errorf("failed to find hostname for node %q", node)
+			}
 
-			reqChan <- pair{node, &Request{
-				Method:   method,
-				ID:       id,
-				Backend:  backend,
-				Classes:  gr.Classes,
-				Duration: _BookingPeriod,
-			}}
+			reqChan <- pair{
+				nodeHost{node, host},
+				&Request{
+					Method:   method,
+					ID:       id,
+					Backend:  backend,
+					Classes:  gr.Classes,
+					Duration: _BookingPeriod,
+				},
+			}
 		}
 		return nil
 	})
 
 	mutex := sync.RWMutex{}
-	nodes := make(map[string]struct{}, len(groups))
+	nodes := make(map[string]string, len(groups))
 	for pair := range reqChan {
 		pair := pair
 		g.Go(func() error {
-			resp, err := c.client.CanCommit(ctx, pair.n, pair.r)
+			resp, err := c.client.CanCommit(ctx, pair.n.host, pair.r)
 			if err == nil && resp.Timeout == 0 {
 				err = errCannotCommit
 			}
@@ -246,7 +277,7 @@ func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]stru
 				return fmt.Errorf("node %q: %w", pair.n, err)
 			}
 			mutex.Lock()
-			nodes[pair.n] = struct{}{}
+			nodes[pair.n.node] = pair.n.host
 			mutex.Unlock()
 			return nil
 		})
@@ -261,7 +292,7 @@ func (c *coordinator) canCommit(ctx context.Context, method Op) (map[string]stru
 
 // commit tells each participant to commit its backup operation
 // It stores the final result in the provided backend
-func (c *coordinator) commit(ctx context.Context, req *StatusRequest, nodes map[string]struct{}) {
+func (c *coordinator) commit(ctx context.Context, req *StatusRequest, nodes map[string]string) {
 	c.commitAll(ctx, req, nodes)
 
 	for len(nodes) > 0 {
@@ -292,7 +323,7 @@ func (c *coordinator) commit(ctx context.Context, req *StatusRequest, nodes map[
 // queryAll queries all participant and store their statuses internally
 //
 // It returns the number of remaining nodes to query in the next round
-func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes map[string]struct{}) int {
+func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes map[string]string) int {
 	ctx, cancel := context.WithTimeout(ctx, c.timeoutQueryStatus)
 	defer cancel()
 
@@ -300,11 +331,12 @@ func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes ma
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(_MaxNumberConns)
 	i := 0
-	for node := range nodes {
+	for node, hostname := range nodes {
 		j := i
+		hostname := hostname
 		rs[j].node = node
 		g.Go(func() error {
-			rs[j].StatusResponse, rs[j].err = c.client.Status(ctx, rs[j].node, req)
+			rs[j].StatusResponse, rs[j].err = c.client.Status(ctx, hostname, req)
 			return nil
 		})
 		i++
@@ -314,11 +346,11 @@ func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes ma
 	for _, r := range rs {
 		st := c.Participants[r.node]
 		if r.err == nil {
-			st.Lasttime, st.Status, st.Reason = now, r.Status, r.Err
+			st.LastTime, st.Status, st.Reason = now, r.Status, r.Err
 			if r.Status == backup.Success || r.Status == backup.Failed {
 				delete(nodes, r.node)
 			}
-		} else if now.Sub(st.Lasttime) > c.timeoutNodeDown {
+		} else if now.Sub(st.LastTime) > c.timeoutNodeDown {
 			st.Status = backup.Failed
 			st.Reason = "might be down:" + r.err.Error()
 			delete(nodes, r.node)
@@ -329,7 +361,7 @@ func (c *coordinator) queryAll(ctx context.Context, req *StatusRequest, nodes ma
 }
 
 // commitAll tells all participants to proceed with their backup operations
-func (c *coordinator) commitAll(ctx context.Context, req *StatusRequest, nodes map[string]struct{}) {
+func (c *coordinator) commitAll(ctx context.Context, req *StatusRequest, nodes map[string]string) {
 	type pair struct {
 		node string
 		err  error
@@ -338,15 +370,15 @@ func (c *coordinator) commitAll(ctx context.Context, req *StatusRequest, nodes m
 	aCounter := int64(len(nodes))
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(_MaxNumberConns)
-	for node := range nodes {
-		node := node
+	for node, hostname := range nodes {
+		node, hostname := node, hostname
 		g.Go(func() error {
 			defer func() {
 				if atomic.AddInt64(&aCounter, -1) == 0 {
 					close(errChan)
 				}
 			}()
-			err := c.client.Commit(ctx, node, req)
+			err := c.client.Commit(ctx, hostname, req)
 			if err != nil {
 				errChan <- pair{node, err}
 			}
@@ -368,12 +400,12 @@ func (c *coordinator) commitAll(ctx context.Context, req *StatusRequest, nodes m
 }
 
 // abortAll tells every node to abort transaction
-func (c *coordinator) abortAll(ctx context.Context, req *AbortRequest, nodes map[string]struct{}) {
-	for node := range nodes {
-		if err := c.client.Abort(ctx, node, req); err != nil {
+func (c *coordinator) abortAll(ctx context.Context, req *AbortRequest, nodes map[string]string) {
+	for name, hostname := range nodes {
+		if err := c.client.Abort(ctx, hostname, req); err != nil {
 			c.log.WithField("action", req.Method).
 				WithField("backup_id", req.ID).
-				WithField("node", node).Errorf("abort %v", err)
+				WithField("node", name).Errorf("abort %v", err)
 		}
 	}
 }

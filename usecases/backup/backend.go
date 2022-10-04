@@ -47,6 +47,7 @@ type objStore struct {
 	BasePath string
 }
 
+// Meta gets a node's metadata from object store
 func (s *objStore) HomeDir() string {
 	return s.b.HomeDir(s.BasePath)
 }
@@ -118,8 +119,8 @@ func (s *coordStore) PutGlobalMeta(ctx context.Context, desc *backup.Distributed
 	return s.putMeta(ctx, GlobalBackupFile, desc)
 }
 
-// GlobalMeta gets coordinator's global metadata from object store
-func (s *coordStore) GlobalMeta(ctx context.Context, backupID string) (*backup.DistributedBackupDescriptor, error) {
+// Meta gets coordinator's global metadata from object store
+func (s *coordStore) Meta(ctx context.Context, backupID string) (*backup.DistributedBackupDescriptor, error) {
 	var backup backup.DistributedBackupDescriptor
 	err := s.meta(ctx, GlobalBackupFile, &backup)
 	return &backup, err
