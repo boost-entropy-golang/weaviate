@@ -45,18 +45,19 @@ type authorizer interface {
 
 type schemaManger interface {
 	RestoreClass(ctx context.Context, d *backup.ClassDescriptor) error
+	NodeName() string
 }
 
 type nodeResolver interface {
 	NodeHostname(nodeName string) (string, bool)
 }
 
-type RestoreStatus struct {
+type Status struct {
 	Path        string
 	StartedAt   time.Time
 	CompletedAt time.Time
 	Status      backup.Status
-	Err         error
+	Err         string
 }
 
 type Manager struct {
@@ -70,13 +71,13 @@ type Manager struct {
 }
 
 func NewManager(
-	node string,
 	logger logrus.FieldLogger,
 	authorizer authorizer,
 	schema schemaManger,
 	sourcer Sourcer,
 	backends BackupBackendProvider,
 ) *Manager {
+	node := schema.NodeName()
 	m := &Manager{
 		node:       node,
 		logger:     logger,
@@ -190,10 +191,10 @@ func (m *Manager) BackupStatus(ctx context.Context, principal *models.Principal,
 }
 
 func (m *Manager) RestorationStatus(ctx context.Context, principal *models.Principal, backend, ID string,
-) (_ RestoreStatus, err error) {
+) (_ Status, err error) {
 	ppath := fmt.Sprintf("backups/%s/%s/restore", backend, ID)
 	if err := m.authorizer.Authorize(principal, "get", ppath); err != nil {
-		return RestoreStatus{}, err
+		return Status{}, err
 	}
 	return m.restorer.status(backend, ID)
 }

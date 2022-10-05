@@ -41,6 +41,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const IdLockPoolSize = 128
+
 // Shard is the smallest completely-contained index unit. A shard manages
 // database files for all the objects it owns. How a shard is determined for a
 // target object (e.g. Murmur hash, etc.) is still open at this point
@@ -56,7 +58,6 @@ type Shard struct {
 	propertyIndices   propertyspecific.Indices
 	deletedDocIDs     *docid.InMemDeletedTracker
 	cleanupInterval   time.Duration
-	cancel            chan struct{}
 	propLengths       *inverted.PropertyLengthTracker
 	randomSource      *bufferedRandomGen
 	versioner         *shardVersioner
@@ -71,6 +72,8 @@ type Shard struct {
 	status      storagestate.Status
 	statusLock  sync.Mutex
 	stopMetrics chan struct{}
+
+	docIdLock []sync.Mutex
 }
 
 type job struct {
@@ -103,13 +106,14 @@ func NewShard(ctx context.Context, promMetrics *monitoring.PrometheusMetrics,
 		deletedDocIDs: docid.NewInMemDeletedTracker(),
 		cleanupInterval: time.Duration(invertedIndexConfig.
 			CleanupIntervalSeconds) * time.Second,
-		cancel:              make(chan struct{}, 1),
 		randomSource:        rand,
 		resourceScanState:   newResourceScanState(),
 		jobQueueCh:          make(chan job, 100000),
 		maxNumberGoroutines: int(math.Round(index.Config.MaxImportGoroutinesFactor * float64(runtime.GOMAXPROCS(0)))),
-		stopMetrics:         make(chan struct{}, 1),
+		stopMetrics:         make(chan struct{}),
 	}
+
+	s.docIdLock = make([]sync.Mutex, IdLockPoolSize)
 	if s.maxNumberGoroutines == 0 {
 		return s, errors.New("no workers to add batch-jobs configured.")
 	}
@@ -221,6 +225,12 @@ func (s *Shard) DBPathLSM() string {
 	return fmt.Sprintf("%s/%s_lsm", s.index.Config.RootPath, s.ID())
 }
 
+func (s *Shard) uuidToIdLockPoolId(idBytes []byte) uint8 {
+	// use the last byte of the uuid to determine which locking-pool a given object should use. The last byte is used
+	// as uuids probably often have some kind of order and the last byte will in general be the one that changes the most
+	return idBytes[15] % IdLockPoolSize
+}
+
 func (s *Shard) initDBFile(ctx context.Context) error {
 	annotatedLogger := s.index.logger.WithFields(logrus.Fields{
 		"shard": s.name,
@@ -257,13 +267,14 @@ func (s *Shard) drop(force bool) error {
 		return storagestate.ErrStatusReadOnly
 	}
 
-	s.cancel <- struct{}{}
-
-	s.stopMetrics <- struct{}{}
-
-	if s.index.Config.TrackVectorDimensions && s.promMetrics != nil {
-		// send 0 in when index gets dropped
-		s.sendVectorDimensionsMetric(0)
+	if s.index.Config.TrackVectorDimensions {
+		// tracking vector dimensions goroutine only works when tracking is enabled
+		// that's why we are trying to stop it only in this case
+		s.stopMetrics <- struct{}{}
+		if s.promMetrics != nil {
+			// send 0 in when index gets dropped
+			s.sendVectorDimensionsMetric(0)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
@@ -519,9 +530,11 @@ func (s *Shard) updateVectorIndexConfig(ctx context.Context,
 }
 
 func (s *Shard) shutdown(ctx context.Context) error {
-	s.cancel <- struct{}{}
-
-	s.stopMetrics <- struct{}{}
+	if s.index.Config.TrackVectorDimensions {
+		// tracking vector dimensions goroutine only works when tracking is enabled
+		// that's why we are trying to stop it only in this case
+		s.stopMetrics <- struct{}{}
+	}
 
 	if err := s.propLengths.Close(); err != nil {
 		return errors.Wrap(err, "close prop length tracker")
