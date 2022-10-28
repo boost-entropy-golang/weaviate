@@ -9,10 +9,11 @@
 //  CONTACT: hello@semi.technology
 //
 
-package ent
+package clients
 
-type VectorizationConfig struct {
-	EndpointURL                    string
-	Model                          string
-	WaitForModel, UseGPU, UseCache bool
+func (v *vectorizer) MetaInfo() (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"name":              "Cohere Module",
+		"documentationHref": "https://docs.cohere.ai/embedding-wiki/",
+	}, nil
 }

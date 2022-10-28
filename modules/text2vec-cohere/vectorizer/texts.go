@@ -16,18 +16,15 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/semi-technologies/weaviate/modules/text2vec-huggingface/ent"
+	"github.com/semi-technologies/weaviate/modules/text2vec-cohere/ent"
 )
 
 func (v *Vectorizer) Texts(ctx context.Context, inputs []string,
 	settings ClassSettings,
 ) ([]float32, error) {
-	res, err := v.client.VectorizeQuery(ctx, v.joinSentences(inputs), ent.VectorizationConfig{
-		EndpointURL:  settings.EndpointURL(),
-		Model:        settings.QueryModel(),
-		WaitForModel: settings.OptionWaitForModel(),
-		UseGPU:       settings.OptionUseGPU(),
-		UseCache:     settings.OptionUseCache(),
+	res, err := v.client.VectorizeQuery(ctx, []string{v.joinSentences(inputs)}, ent.VectorizationConfig{
+		Model:    settings.Model(),
+		Truncate: settings.Truncate(),
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "remote client vectorize")

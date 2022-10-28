@@ -13,6 +13,7 @@ package vectorizer
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -22,13 +23,17 @@ import (
 )
 
 const (
-	DefaultHuggingFaceModel      = "sentence-transformers/msmarco-bert-base-dot-v5"
-	DefaultOptionWaitForModel    = false
-	DefaultOptionUseGPU          = false
-	DefaultOptionUseCache        = true
+	DefaultCohereModel           = "large"
+	DefaultTruncate              = "NONE"
 	DefaultVectorizeClassName    = true
 	DefaultPropertyIndexed       = true
 	DefaultVectorizePropertyName = false
+)
+
+var (
+	availableCohereModels    = []string{"small", "medium", "large"}
+	experimetnalCohereModels = []string{"multilingual-2210-alpha"}
+	availableTruncates       = []string{"NONE", "LEFT", "RIGHT"}
 )
 
 type classSettings struct {
@@ -76,36 +81,12 @@ func (ic *classSettings) VectorizePropertyName(propName string) bool {
 	return asBool
 }
 
-func (ic *classSettings) EndpointURL() string {
-	return ic.getEndpointURL()
+func (ic *classSettings) Model() string {
+	return ic.getProperty("model", DefaultCohereModel)
 }
 
-func (ic *classSettings) PassageModel() string {
-	model := ic.getPassageModel()
-	if model == "" {
-		return DefaultHuggingFaceModel
-	}
-	return model
-}
-
-func (ic *classSettings) QueryModel() string {
-	model := ic.getQueryModel()
-	if model == "" {
-		return DefaultHuggingFaceModel
-	}
-	return model
-}
-
-func (ic *classSettings) OptionWaitForModel() bool {
-	return ic.getOptionOrDefault("waitForModel", DefaultOptionWaitForModel)
-}
-
-func (ic *classSettings) OptionUseGPU() bool {
-	return ic.getOptionOrDefault("useGPU", DefaultOptionUseGPU)
-}
-
-func (ic *classSettings) OptionUseCache() bool {
-	return ic.getOptionOrDefault("useCache", DefaultOptionUseCache)
+func (ic *classSettings) Truncate() string {
+	return ic.getProperty("truncate", DefaultTruncate)
 }
 
 func (ic *classSettings) VectorizeClassName() bool {
@@ -133,108 +114,51 @@ func (ic *classSettings) Validate(class *models.Class) error {
 		return errors.New("empty config")
 	}
 
-	err := ic.validateClassSettings()
+	model := ic.Model()
+	if !ic.validateCohereSetting(model, append(availableCohereModels, experimetnalCohereModels...)) {
+		return errors.Errorf("wrong Cohere model name, available model names are: %v", availableCohereModels)
+	}
+	truncate := ic.Truncate()
+	if !ic.validateCohereSetting(truncate, availableTruncates) {
+		return errors.Errorf("wrong truncate type, available types are: %v", availableTruncates)
+	}
+
+	err := ic.validateIndexState(class, ic)
 	if err != nil {
 		return err
 	}
 
-	err = ic.validateIndexState(class, ic)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
-func (ic *classSettings) validateClassSettings() error {
-	endpointURL := ic.getEndpointURL()
-	if endpointURL != "" {
-		// endpoint is set, should be used for feature extraction
-		// all other settings are not relevant
-		return nil
-	}
-
-	model := ic.getProperty("model")
-	passageModel := ic.getProperty("passageModel")
-	queryModel := ic.getProperty("queryModel")
-
-	if model != "" && (passageModel != "" || queryModel != "") {
-		return errors.New("only one setting must be set either 'model' or 'passageModel' with 'queryModel'")
-	}
-
-	if model == "" {
-		if passageModel != "" && queryModel == "" {
-			return errors.New("'passageModel' is set, but 'queryModel' is empty")
-		}
-		if passageModel == "" && queryModel != "" {
-			return errors.New("'queryModel' is set, but 'passageModel' is empty")
+func (ic *classSettings) validateCohereSetting(value string, availableValues []string) bool {
+	for i := range availableValues {
+		if value == availableValues[i] {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
-func (ic *classSettings) getPassageModel() string {
-	model := ic.getProperty("model")
-	if model == "" {
-		model = ic.getProperty("passageModel")
+func (ic *classSettings) getProperty(name, defaultValue string) string {
+	if ic.cfg == nil {
+		// we would receive a nil-config on cross-class requests, such as Explore{}
+		return defaultValue
 	}
-	return model
-}
 
-func (ic *classSettings) getQueryModel() string {
-	model := ic.getProperty("model")
-	if model == "" {
-		model = ic.getProperty("queryModel")
-	}
-	return model
-}
-
-func (ic *classSettings) getEndpointURL() string {
-	endpointURL := ic.getProperty("endpointUrl")
-	if endpointURL == "" {
-		endpointURL = ic.getProperty("endpointURL")
-	}
-	return endpointURL
-}
-
-func (ic *classSettings) getOption(option string) *bool {
-	if ic.cfg != nil {
-		options, ok := ic.cfg.Class()["options"]
+	model, ok := ic.cfg.Class()[name]
+	if ok {
+		asString, ok := model.(string)
 		if ok {
-			asMap, ok := options.(map[string]interface{})
-			if ok {
-				option, ok := asMap[option]
-				if ok {
-					asBool, ok := option.(bool)
-					if ok {
-						return &asBool
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (ic *classSettings) getOptionOrDefault(option string, defaultValue bool) bool {
-	optionValue := ic.getOption(option)
-	if optionValue != nil {
-		return *optionValue
-	}
-	return defaultValue
-}
-
-func (ic *classSettings) getProperty(name string) string {
-	if ic.cfg != nil {
-		model, ok := ic.cfg.Class()[name]
-		if ok {
-			asString, ok := model.(string)
-			if ok {
+			if name == "truncate" {
 				return asString
+			} else {
+				return strings.ToLower(asString)
 			}
 		}
 	}
-	return ""
+
+	return defaultValue
 }
 
 func (cv *classSettings) validateIndexState(class *models.Class, settings ClassSettings) error {
@@ -271,5 +195,5 @@ func (cv *classSettings) validateIndexState(class *models.Class, settings ClassS
 		"used to determine the vector position. To fix this, set 'vectorizeClassName' " +
 		"to true if the class name is contextionary-valid. Alternatively add at least " +
 		"contextionary-valid text/string property which is not excluded from " +
-		"indexing.")
+		"indexing")
 }

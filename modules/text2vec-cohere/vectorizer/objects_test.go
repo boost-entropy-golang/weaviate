@@ -25,15 +25,14 @@ import (
 // text2vec-contextionary module
 func TestVectorizingObjects(t *testing.T) {
 	type testCase struct {
-		name                     string
-		input                    *models.Object
-		expectedClientCall       string
-		expectedHuggingFaceModel string
-		noindex                  string
-		excludedProperty         string // to simulate a schema where property names aren't vectorized
-		excludedClass            string // to simulate a schema where class names aren't vectorized
-		passageModel             string
-		endpointURL              string
+		name                string
+		input               *models.Object
+		expectedClientCall  string
+		expectedCohereModel string
+		noindex             string
+		excludedProperty    string // to simulate a schema where property names aren't vectorized
+		excludedClass       string // to simulate a schema where class names aren't vectorized
+		cohereModel         string
 	}
 
 	tests := []testCase{
@@ -42,9 +41,9 @@ func TestVectorizingObjects(t *testing.T) {
 			input: &models.Object{
 				Class: "Car",
 			},
-			passageModel:             "sentence-transformers/gtr-t5-xl",
-			expectedHuggingFaceModel: "sentence-transformers/gtr-t5-xl",
-			expectedClientCall:       "car",
+			cohereModel:         "large",
+			expectedCohereModel: "large",
+			expectedClientCall:  "car",
 		},
 		{
 			name: "object with one string prop",
@@ -169,15 +168,6 @@ func TestVectorizingObjects(t *testing.T) {
 			},
 			expectedClientCall: "super car brand of the car best brand review a very great car",
 		},
-		{
-			name: "empty object with HF Inference Endpoint",
-			input: &models.Object{
-				Class: "Car",
-			},
-			endpointURL:              "https://url.cloud",
-			expectedHuggingFaceModel: "",
-			expectedClientCall:       "car",
-		},
 	}
 
 	for _, test := range tests {
@@ -190,17 +180,16 @@ func TestVectorizingObjects(t *testing.T) {
 				excludedProperty:   test.excludedProperty,
 				skippedProperty:    test.noindex,
 				vectorizeClassName: test.excludedClass != "Car",
-				passageModel:       test.passageModel,
-				endpointURL:        test.endpointURL,
+				cohereModel:        test.cohereModel,
 			}
 			err := v.Object(context.Background(), test.input, ic)
 
 			require.Nil(t, err)
 			assert.Equal(t, models.C11yVector{0, 1, 2, 3}, test.input.Vector)
 			expected := strings.Split(test.expectedClientCall, " ")
-			actual := strings.Split(client.lastInput, " ")
+			actual := strings.Split(client.lastInput[0], " ")
 			assert.Equal(t, expected, actual)
-			assert.Equal(t, test.expectedHuggingFaceModel, client.lastConfig.Model)
+			assert.Equal(t, test.expectedCohereModel, client.lastConfig.Model)
 		})
 	}
 }

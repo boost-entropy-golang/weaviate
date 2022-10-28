@@ -9,10 +9,18 @@
 //  CONTACT: hello@semi.technology
 //
 
-package ent
+package neartext
 
-type VectorizationConfig struct {
-	EndpointURL                    string
-	Model                          string
-	WaitForModel, UseGPU, UseCache bool
+type fakeTransformer struct{}
+
+func (t *fakeTransformer) Transform(in []string) ([]string, error) {
+	result := make([]string, len(in))
+	for i, txt := range in {
+		if txt == "transform this" {
+			result[i] = "transformed text"
+		} else {
+			result[i] = txt
+		}
+	}
+	return result, nil
 }

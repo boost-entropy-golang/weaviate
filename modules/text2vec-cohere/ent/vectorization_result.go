@@ -11,8 +11,8 @@
 
 package ent
 
-type VectorizationConfig struct {
-	EndpointURL                    string
-	Model                          string
-	WaitForModel, UseGPU, UseCache bool
+type VectorizationResult struct {
+	Text       []string
+	Dimensions int
+	Vector     []float32
 }

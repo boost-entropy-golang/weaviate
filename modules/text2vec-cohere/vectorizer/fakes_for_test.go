@@ -14,16 +14,16 @@ package vectorizer
 import (
 	"context"
 
-	"github.com/semi-technologies/weaviate/modules/text2vec-huggingface/ent"
+	"github.com/semi-technologies/weaviate/modules/text2vec-cohere/ent"
 )
 
 type fakeClient struct {
-	lastInput  string
+	lastInput  []string
 	lastConfig ent.VectorizationConfig
 }
 
 func (c *fakeClient) Vectorize(ctx context.Context,
-	text string, cfg ent.VectorizationConfig,
+	text []string, cfg ent.VectorizationConfig,
 ) (*ent.VectorizationResult, error) {
 	c.lastInput = text
 	c.lastConfig = cfg
@@ -35,7 +35,7 @@ func (c *fakeClient) Vectorize(ctx context.Context,
 }
 
 func (c *fakeClient) VectorizeQuery(ctx context.Context,
-	text string, cfg ent.VectorizationConfig,
+	text []string, cfg ent.VectorizationConfig,
 ) (*ent.VectorizationResult, error) {
 	c.lastInput = text
 	c.lastConfig = cfg
@@ -47,12 +47,11 @@ func (c *fakeClient) VectorizeQuery(ctx context.Context,
 }
 
 type fakeSettings struct {
-	skippedProperty                string
-	vectorizeClassName             bool
-	excludedProperty               string
-	passageModel, queryModel       string
-	waitForModel, useGPU, useCache bool
-	endpointURL                    string
+	skippedProperty    string
+	vectorizeClassName bool
+	excludedProperty   string
+	cohereModel        string
+	truncateType       string
 }
 
 func (f *fakeSettings) PropertyIndexed(propName string) bool {
@@ -67,26 +66,10 @@ func (f *fakeSettings) VectorizeClassName() bool {
 	return f.vectorizeClassName
 }
 
-func (f *fakeSettings) EndpointURL() string {
-	return f.endpointURL
+func (f *fakeSettings) Model() string {
+	return f.cohereModel
 }
 
-func (f *fakeSettings) PassageModel() string {
-	return f.passageModel
-}
-
-func (f *fakeSettings) QueryModel() string {
-	return f.queryModel
-}
-
-func (f *fakeSettings) OptionWaitForModel() bool {
-	return f.waitForModel
-}
-
-func (f *fakeSettings) OptionUseGPU() bool {
-	return f.useGPU
-}
-
-func (f *fakeSettings) OptionUseCache() bool {
-	return f.useCache
+func (f *fakeSettings) Truncate() string {
+	return f.truncateType
 }

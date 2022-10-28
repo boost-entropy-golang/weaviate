@@ -9,10 +9,22 @@
 //  CONTACT: hello@semi.technology
 //
 
-package ent
+package clients
 
-type VectorizationConfig struct {
-	EndpointURL                    string
-	Model                          string
-	WaitForModel, UseGPU, UseCache bool
+import "fmt"
+
+type cohereUrlBuilder struct {
+	origin   string
+	pathMask string
+}
+
+func newCohereUrlBuilder() *cohereUrlBuilder {
+	return &cohereUrlBuilder{
+		origin:   "https://api.cohere.ai",
+		pathMask: "/embed",
+	}
+}
+
+func (c *cohereUrlBuilder) url() string {
+	return fmt.Sprintf("%s%s", c.origin, c.pathMask)
 }

@@ -19,7 +19,7 @@ import (
 
 	"github.com/fatih/camelcase"
 	"github.com/semi-technologies/weaviate/entities/models"
-	"github.com/semi-technologies/weaviate/modules/text2vec-huggingface/ent"
+	"github.com/semi-technologies/weaviate/modules/text2vec-cohere/ent"
 )
 
 type Vectorizer struct {
@@ -33,9 +33,9 @@ func New(client Client) *Vectorizer {
 }
 
 type Client interface {
-	Vectorize(ctx context.Context, input string,
+	Vectorize(ctx context.Context, input []string,
 		config ent.VectorizationConfig) (*ent.VectorizationResult, error)
-	VectorizeQuery(ctx context.Context, input string,
+	VectorizeQuery(ctx context.Context, input []string,
 		config ent.VectorizationConfig) (*ent.VectorizationResult, error)
 }
 
@@ -44,12 +44,8 @@ type ClassSettings interface {
 	PropertyIndexed(property string) bool
 	VectorizePropertyName(propertyName string) bool
 	VectorizeClassName() bool
-	EndpointURL() string
-	PassageModel() string
-	QueryModel() string
-	OptionWaitForModel() bool
-	OptionUseGPU() bool
-	OptionUseCache() bool
+	Model() string
+	Truncate() string
 }
 
 func sortStringKeys(schema_map map[string]interface{}) []string {
@@ -119,13 +115,9 @@ func (v *Vectorizer) object(ctx context.Context, className string,
 		corpi = append(corpi, camelCaseToLower(className))
 	}
 
-	text := strings.Join(corpi, " ")
+	text := []string{strings.Join(corpi, " ")}
 	res, err := v.client.Vectorize(ctx, text, ent.VectorizationConfig{
-		EndpointURL:  icheck.EndpointURL(),
-		Model:        icheck.PassageModel(),
-		WaitForModel: icheck.OptionWaitForModel(),
-		UseGPU:       icheck.OptionUseGPU(),
-		UseCache:     icheck.OptionUseCache(),
+		Model: icheck.Model(),
 	})
 	if err != nil {
 		return nil, err
