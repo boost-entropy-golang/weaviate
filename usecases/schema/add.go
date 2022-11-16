@@ -90,6 +90,7 @@ func (m *Manager) RestoreClass(ctx context.Context, d *backup.ClassDescriptor) e
 	semanticSchema := m.state.ObjectSchema
 	semanticSchema.Classes = append(semanticSchema.Classes, class)
 
+	shardingState.MigrateFromOldFormat()
 	m.state.ShardingState[class.Class] = shardingState
 	m.state.ShardingState[class.Class].SetLocalName(m.clusterState.LocalName())
 	err = m.saveSchema(ctx)
@@ -145,7 +146,7 @@ func (m *Manager) addClass(ctx context.Context, class *models.Class,
 		return errors.Wrap(err, "open cluster-wide transaction")
 	}
 
-	if err := m.cluster.CommitTransaction(ctx, tx); err != nil {
+	if err := m.cluster.CommitWriteTransaction(ctx, tx); err != nil {
 		return errors.Wrap(err, "commit cluster-wide transaction")
 	}
 
@@ -323,7 +324,7 @@ func (m *Manager) parseShardingConfig(ctx context.Context,
 	parsed, err := sharding.ParseConfig(class.ShardingConfig,
 		m.clusterState.NodeCount())
 	if err != nil {
-		return errors.Wrap(err, "parse vector index config")
+		return errors.Wrap(err, "parse sharding config")
 	}
 
 	class.ShardingConfig = parsed

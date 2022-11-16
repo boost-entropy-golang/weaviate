@@ -19,6 +19,7 @@ import (
 	"github.com/semi-technologies/weaviate/entities/models"
 	"github.com/semi-technologies/weaviate/entities/schema"
 	"github.com/semi-technologies/weaviate/usecases/config"
+	"github.com/semi-technologies/weaviate/usecases/scaling"
 	"github.com/semi-technologies/weaviate/usecases/sharding"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
@@ -484,8 +485,8 @@ func newSchemaManager() *Manager {
 	sm, err := NewManager(&NilMigrator{}, newFakeRepo(), logger, &fakeAuthorizer{},
 		dummyConfig, dummyParseVectorConfig, // only option for now
 		vectorizerValidator, dummyValidateInvertedConfig,
-		&fakeModuleConfig{}, &fakeClusterState{},
-		&fakeTxClient{},
+		&fakeModuleConfig{}, &fakeClusterState{hosts: []string{"node1"}},
+		&fakeTxClient{}, &fakeScaleOutManager{},
 	)
 	if err != nil {
 		panic(err.Error())
@@ -532,8 +533,8 @@ func Test_ParseVectorConfigOnDiskLoad(t *testing.T) {
 		config.Config{DefaultVectorizerModule: config.VectorizerModuleNone},
 		dummyParseVectorConfig, // only option for now
 		&fakeVectorizerValidator{}, dummyValidateInvertedConfig,
-		&fakeModuleConfig{}, &fakeClusterState{},
-		&fakeTxClient{},
+		&fakeModuleConfig{}, &fakeClusterState{hosts: []string{"node1"}},
+		&fakeTxClient{}, &fakeScaleOutManager{},
 	)
 	require.Nil(t, err)
 
@@ -541,4 +542,15 @@ func Test_ParseVectorConfigOnDiskLoad(t *testing.T) {
 	assert.Equal(t, fakeVectorConfig{
 		raw: "parse me, i should be in some sort of an object",
 	}, classes[0].VectorIndexConfig)
+}
+
+type fakeScaleOutManager struct{}
+
+func (f *fakeScaleOutManager) Scale(ctx context.Context,
+	className string, old, updated sharding.Config,
+) (*sharding.State, error) {
+	return nil, nil
+}
+
+func (f *fakeScaleOutManager) SetSchemaManager(sm scaling.SchemaManager) {
 }
